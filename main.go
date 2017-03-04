@@ -11,21 +11,22 @@ import (
 
 	terminalGiphy "github.com/bkazi/Terminal-GIPHY/lib"
 	imgcat "github.com/martinlindhe/imgcat/lib"
-	"gopkg.in/alecthomas/kingpin.v2"
+	kingpin "gopkg.in/alecthomas/kingpin.v2"
 )
 
 const apiParam = "dc6zaTOxFJmzC"
 const apiKey = "api_key"
-
 const apiURL = "http://api.giphy.com/v1/gifs/"
 
 var (
 	app = kingpin.New("Terminal-GIPHY", "A terminal client for GIPHY")
 
-	trending = app.Command("trending", "Look at trending GIFs")
+	trending       = app.Command("trending", "Look at trending GIFs")
+	trendingNumber = trending.Arg("number", "The index of GIF to view (indexed at 0 and < 10)").Default("-1").Int()
 
-	search = app.Command("search", "Search for GIFs")
-	query  = search.Arg("query", "Search string").Required().String()
+	search       = app.Command("search", "Search for GIFs")
+	query        = search.Arg("query", "Search string").Required().String()
+	searchNumber = search.Arg("number", "The index of GIF to view (indexed at 0 and < 10)").Default("-1").Int()
 )
 
 func constructURL(endpoint string, extraKey string, extraParam string) (*url.URL, error) {
@@ -36,10 +37,63 @@ func constructURL(endpoint string, extraKey string, extraParam string) (*url.URL
 	u.Path = path.Join(u.Path, endpoint)
 	q := u.Query()
 	q.Add(apiKey, apiParam)
-	q.Add("limit", "1")
+	q.Add("limit", "10")
 	q.Add(extraKey, extraParam)
 	u.RawQuery = q.Encode()
 	return u, nil
+}
+
+func getGifData(u *url.URL, response *terminalGiphy.Response) error {
+	resp, err := http.Get(u.String())
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(body, &response)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func displayGif(gifURL string) error {
+	gifResp, err := http.Get(gifURL)
+	if err != nil {
+		return err
+	}
+	defer gifResp.Body.Close()
+
+	imgcat.Cat(gifResp.Body, os.Stdout)
+	return nil
+}
+
+func displayGifs(response terminalGiphy.Response, number int) error {
+	if number > -1 {
+		gifImageData := response.Data[number].Images
+		gifURL := gifImageData.FixedHeight["url"].(string)
+
+		err := displayGif(gifURL)
+		if err != nil {
+			return err
+		}
+	} else {
+		for i := 0; i < len(response.Data); i++ {
+			gifImageData := response.Data[i].Images
+			gifURL := gifImageData.Preview["url"].(string)
+			fmt.Printf("[%d] ", i)
+			err := displayGif(gifURL)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }
 
 func main() {
@@ -47,17 +101,29 @@ func main() {
 		endpoint   string
 		extraKey   string
 		extraParam string
+		number     int
 	)
 
 	switch kingpin.MustParse(app.Parse(os.Args[1:])) {
 
 	case trending.FullCommand():
 		endpoint = "trending"
+		number = *trendingNumber
+		if number > 10 {
+			fmt.Println("Index very large, try again with less than 10")
+			os.Exit(1)
+		}
 
 	case search.FullCommand():
 		endpoint = "search"
 		extraKey = "q"
 		extraParam = *query
+
+		number = *searchNumber
+		if number > 10 {
+			fmt.Println("Index very large, try again with less than 10")
+			os.Exit(1)
+		}
 	}
 
 	u, err := constructURL(endpoint, extraKey, extraParam)
@@ -67,19 +133,7 @@ func main() {
 	}
 
 	response := terminalGiphy.Response{}
-	resp, err := http.Get(u.String())
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	err = json.Unmarshal(body, &response)
+	err = getGifData(u, &response)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
@@ -89,15 +143,10 @@ func main() {
 		fmt.Println("No GIFs found :(")
 		os.Exit(1)
 	}
-	gifImageData := response.Data[0].Images
-	gifURL := gifImageData.FixedHeight["url"].(string)
-
-	gifResp, err := http.Get(gifURL)
+	err = displayGifs(response, number)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	defer gifResp.Body.Close()
 
-	imgcat.Cat(gifResp.Body, os.Stdout)
 }

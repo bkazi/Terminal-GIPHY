@@ -10,4 +10,5 @@ type data struct {
 
 type images struct {
 	FixedHeight map[string]interface{} `json:"fixed_height"`
+	Preview     map[string]interface{} `json:"fixed_height_small_still"`
 }
